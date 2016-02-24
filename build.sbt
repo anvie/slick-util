@@ -1,6 +1,6 @@
 organization := "com.ansvia"
 
-name := "slickutil"
+name := "slick-util"
 
 version := "0.0.2"
 
