@@ -5,7 +5,8 @@ import java.net.URI
 import slick.backend.DatabaseConfig
 import slick.codegen.{SourceCodeGenerator, OutputHelpers, AbstractSourceCodeGenerator}
 import slick.driver.JdbcProfile
-import slick.{model => m}
+import slick.model.Model
+import slick.{model => m, SlickException}
 
 import scala.concurrent.duration.Duration
 import scala.concurrent.{ExecutionContext, Await}
@@ -21,29 +22,24 @@ import scala.concurrent.{ExecutionContext, Await}
  * @param model Slick data model for which code should be generated.
  */
 class AnsviaSlickSourceCodeGenerator(model: m.Model)
-    extends AbstractSourceCodeGenerator(model) with OutputHelpers{
+    extends AbstractSourceCodeGenerator(model) with OutputHelpers {
 
 
     // "Tying the knot": making virtual classes concrete
     type Table = TableDef
     def Table = new TableDef(_)
 
-//    override def code = {
-//        "import scala.slick.model.ForeignKeyAction\n" +
-//            ( if(tables.exists(_.hlistEnabled)){
-//                "import scala.slick.collection.heterogenous._\n"+
-//                    "import scala.slick.collection.heterogenous.syntax._\n"
-//            } else ""
-//                ) +
-//            ( if(tables.exists(_.PlainSqlMapper.enabled)){
-//                "// NOTE: GetResult mappers for plain SQL are only generated for tables where Slick knows how to map the types of all columns.\n"+
-//                    "import scala.slick.jdbc.{GetResult => GR}\n"
-//            } else ""
-//                ) +
-//            "\n/** DDL for all tables. Call .create to execute. */\nlazy val ddl = " + tables.map(t => (jamak(t.TableValue.name.toString)) + ".ddl").mkString(" ++ ") +
-//            "\n\n" +
-//            tables.map(_.code.mkString("\n")).mkString("\n\n")
-//    }
+    protected def customHeadCode = {
+        s"""
+          |
+          |// base entity class
+          |trait Entity
+          |
+          |abstract class BaseTable[T](tag: Tag, name: String) extends Table[T](tag, name) {
+          |    val id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
+          |}
+        """.stripMargin.trim
+    }
 
     override def code = {
         "import slick.model.ForeignKeyAction\n" +
@@ -56,7 +52,7 @@ class AnsviaSlickSourceCodeGenerator(model: m.Model)
                 "// NOTE: GetResult mappers for plain SQL are only generated for tables where Slick knows how to map the types of all columns.\n"+
                     "import slick.jdbc.{GetResult => GR}\n"
             } else ""
-                ) +
+                ) + customHeadCode +
             (if(ddlEnabled){
                 "\n/** DDL for all tables. Call .create to execute. */" +
                     (
@@ -84,7 +80,9 @@ class AnsviaSlickSourceCodeGenerator(model: m.Model)
         // Performance should really not be critical in the code generator. Models shouldn't be huge.
         // Also lazy vals don't inherit docs from defs
         type EntityType     =     EntityTypeDef
-        def  EntityType     = new EntityType{}
+        def  EntityType     = new EntityType{
+            override def parents: Seq[String] = super.parents ++ Seq("Entity")
+        }
         type PlainSqlMapper =     PlainSqlMapperDef
         def  PlainSqlMapper = new PlainSqlMapper{}
         type TableClass     =     TableClassDef
@@ -93,18 +91,46 @@ class AnsviaSlickSourceCodeGenerator(model: m.Model)
                 val prns = parents.map(" with " + _).mkString("")
                 val args = model.name.schema.map(n => s"""Some("$n")""") ++ Seq("\""+model.name.table+"\"")
                 s"""
-class ${name}Row(_tableTag: Tag) extends Table[$elementType](_tableTag, ${args.mkString(", ")})$prns {
+class ${name}Row(_tableTag: Tag) extends BaseTable[$elementType](_tableTag, ${args.mkString(", ")})$prns {
   ${indent(body.map(_.mkString("\n")).mkString("\n\n"))}
 }
         """.trim()
             }
         }
         type TableValue     =     TableValueDef
-        def  TableValue     = new TableValue{
+        def  TableValue     = new TableValue {
             override def code: String = s"lazy val ${jamak(name.toString)} = new TableQuery(tag => new ${TableClass.name}Row(tag))"
+//            override def code: String = s"lazy val ${jamak(name.toString)} = new BaseTableQuery[${TableClass.name}, BaseTable[${TableClass.name}]](tag => new ${TableClass.name}Row(tag))".trim()
+
+//            override def code: String = s"lazy val ${jamak(name.toString)} = new TableQuery(tag => new ${TableClass.name}Row(tag)){\n" +
+//                "    lazy val findById = this.findBy(t => t.id)\n" +
+//                "}\n"
         }
         type Column         =     ColumnDef
-        def  Column         = new Column(_)
+//        def  Column         = new Column(_)
+        def  Column         = new ColumnDef(_){
+//            def defaultCode = {
+//                case Some(v) => s"Some(${defaultCode(v)})"
+//                case s:String  => "\""+s+"\""
+//                case None      => s"None"
+//                case v:Byte    => s"$v"
+//                case v:Int     => s"$v"
+//                case v:Long    => s"${v}L"
+//                case v:Float   => s"${v}F"
+//                case v:Double  => s"$v"
+//                case v:Boolean => s"$v"
+//                case v:Short   => s"$v"
+//                case v:Char   => s"'$v'"
+//                case v:BigDecimal => s"new scala.math.BigDecimal(new java.math.BigDecimal($v))"
+//                case v => throw new SlickException( s"Dont' know how to generate code for default value $v of ${v.getClass}. Override def defaultCode to render the value." )
+//            }
+            // Explicit type to allow overloading existing Slick method names.
+            // Explicit type argument for better error message when implicit type mapper not found.
+            override def code = {
+                (if (name == "id") "override " else "") +
+                    s"""val $name: Rep[$actualType] = column[$actualType]("${model.name}"${options.map(", "+_).mkString("")})"""
+            }
+        }
         type PrimaryKey     =     PrimaryKeyDef
         def  PrimaryKey     = new PrimaryKey(_)
         type ForeignKey     =     MyForeignKeyDef
@@ -152,7 +178,7 @@ object AnsviaSlickSourceCodeGenerator {
         val db = dbFactory.forURL(url, driver = jdbcDriver,
             user = user.getOrElse(null), password = password.getOrElse(null), keepAliveConnection = true)
         try {
-            val m = Await.result(db.run(driver.createModel(None, true)(ExecutionContext.global).withPinnedSession), Duration.Inf)
+            val m: Model = Await.result(db.run(driver.createModel(None, true)(ExecutionContext.global).withPinnedSession), Duration.Inf)
             new AnsviaSlickSourceCodeGenerator(m).writeToFile(slickDriver,outputDir,pkg)
         } finally db.close
     }
