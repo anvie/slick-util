@@ -21,7 +21,7 @@ import scala.concurrent.{ExecutionContext, Await}
  * My custom slick code generator to fit my taste.
  * @param model Slick data model for which code should be generated.
  */
-class AnsviaSlickSourceCodeGenerator(model: m.Model)
+class AnsviaSlickSourceCodeGenerator(model: m.Model, withEntityExtension:Boolean)
     extends AbstractSourceCodeGenerator(model) with OutputHelpers {
 
 
@@ -81,7 +81,13 @@ class AnsviaSlickSourceCodeGenerator(model: m.Model)
         // Also lazy vals don't inherit docs from defs
         type EntityType     =     EntityTypeDef
         def  EntityType     = new EntityType{
-            override def parents: Seq[String] = super.parents ++ Seq("Entity")
+            override def parents: Seq[String] = {
+                if (withEntityExtension){
+                    super.parents ++ Seq(name.toString + "Ext", "Entity")
+                }else{
+                    super.parents ++ Seq("Entity")
+                }
+            }
         }
         type PlainSqlMapper =     PlainSqlMapperDef
         def  PlainSqlMapper = new PlainSqlMapper{}
@@ -171,7 +177,7 @@ class ${name}Row(_tableTag: Tag) extends BaseTable[$elementType](_tableTag, ${ar
 /** A runnable class to execute the code generator without further setup */
 object AnsviaSlickSourceCodeGenerator {
 
-    def run(slickDriver: String, jdbcDriver: String, url: String, outputDir: String, pkg: String, user: Option[String], password: Option[String]): Unit = {
+    def run(slickDriver: String, jdbcDriver: String, url: String, outputDir: String, pkg: String, user: Option[String], password: Option[String], withEntityExtension:Boolean): Unit = {
         val driver: JdbcProfile =
             Class.forName(slickDriver + "$").getField("MODULE$").get(null).asInstanceOf[JdbcProfile]
         val dbFactory = driver.api.Database
@@ -179,7 +185,7 @@ object AnsviaSlickSourceCodeGenerator {
             user = user.getOrElse(null), password = password.getOrElse(null), keepAliveConnection = true)
         try {
             val m: Model = Await.result(db.run(driver.createModel(None, true)(ExecutionContext.global).withPinnedSession), Duration.Inf)
-            new AnsviaSlickSourceCodeGenerator(m).writeToFile(slickDriver,outputDir,pkg)
+            new AnsviaSlickSourceCodeGenerator(m, withEntityExtension).writeToFile(slickDriver,outputDir,pkg)
         } finally db.close
     }
 
@@ -195,15 +201,17 @@ object AnsviaSlickSourceCodeGenerator {
 //    }
 
     def main(args: Array[String]): Unit = {
-        args.toList match {
+        val withEntityExtension = args.contains("--with-entity-extension")
+
+        args.filterNot(_.startsWith("--")).toList match {
 //            case uri :: Nil =>
 //                run(new URI(uri), None)
 //            case uri :: outputDir :: Nil =>
 //                run(new URI(uri), Some(outputDir))
             case slickDriver :: jdbcDriver :: url :: outputDir :: pkg :: Nil =>
-                run(slickDriver, jdbcDriver, url, outputDir, pkg, None, None)
+                run(slickDriver, jdbcDriver, url, outputDir, pkg, None, None, withEntityExtension)
             case slickDriver :: jdbcDriver :: url :: outputDir :: pkg :: user :: password :: Nil =>
-                run(slickDriver, jdbcDriver, url, outputDir, pkg, Some(user), Some(password))
+                run(slickDriver, jdbcDriver, url, outputDir, pkg, Some(user), Some(password), withEntityExtension)
             case _ => {
                 println("""
                           |Usage:
