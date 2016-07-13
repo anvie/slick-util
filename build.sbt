@@ -2,12 +2,11 @@ organization := "com.ansvia"
 
 name := "slick-util"
 
-version := "0.0.4"
+version := "0.1.0-SNAPSHOT"
 
 description := ""
 
-scalaVersion := "2.11.6"
-
+scalaVersion := "2.11.8"
 
 resolvers ++= Seq(
 	"Sonatype Releases" at "https://oss.sonatype.org/content/groups/scala-tools",
@@ -16,14 +15,16 @@ resolvers ++= Seq(
 	"Ansvia snapshot repo" at "http://scala.repo.ansvia.com/nexus/content/repositories/snapshots"
 )
 
+val slickVersion = "3.1.1"
+
 libraryDependencies ++= Seq(
 //    "org.specs2" %% "specs2" % "1.14",
     "ch.qos.logback" % "logback-classic" % "1.0.13",
-    "com.typesafe.slick" %% "slick" % "3.1.1",
-    "com.typesafe.slick" %% "slick-codegen" % "3.1.1",
+    "com.typesafe.slick" %% "slick" % slickVersion,
+    "com.typesafe.slick" %% "slick-codegen" % slickVersion,
     "org.postgresql" % "postgresql" % "9.4.1208.jre7",
     //"org.postgresql" % "postgresql" % "9.4-1206-jdbc42",
-    "com.h2database" % "h2" % "1.4.190"
+    "com.h2database" % "h2" % "1.4.191"
 )
 
 //enable this if eclipse plugin activated
