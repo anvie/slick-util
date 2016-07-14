@@ -151,44 +151,19 @@ class ${name}Row(_tableTag: Tag) extends BaseTable[$elementType](_tableTag, ${ar
         def  Index          = new Index(_)
 
         class MyForeignKeyDef(model: m.ForeignKey) extends super.ForeignKeyDef(model){
-//            override def code = {
-//                val pkTable = jamak(referencedTable.TableValue.name.toString)
-//                val (pkColumns, fkColumns) = (referencedColumns, referencingColumns).zipped.map { (p, f) =>
-//                    val pk = s"r.${p.name}"
-//                    val fk = f.name
-//                    if(p.model.nullable && !f.model.nullable) (pk, s"Rep.Some($fk)")
-//                    else if(!p.model.nullable && f.model.nullable) (s"Rep.Some($pk)", fk)
-//                    else (pk, fk)
-//                }.unzip
-//                s"""lazy val $name = foreignKey("$dbName", ${compoundValue(fkColumns)}, $pkTable)(r => ${compoundValue(pkColumns)}, onUpdate=${onUpdate}, onDelete=${onDelete})"""
-//            }
-
             override def code = {
                 val pkTable = jamak(referencedTable.TableValue.name.toString)
                 val (pkColumns, fkColumns) = (referencedColumns, referencingColumns).zipped.map { (p, f) =>
                     val pk = s"r.${p.name}"
                     val fk = f.name.toString
 
-//                    println(s"=========================> F.NAME = $fk")
-
                     if(p.model.nullable && !f.model.nullable) (pk, s"Rep.Some($fk)")
                     else if(!p.model.nullable && f.model.nullable) (s"Rep.Some($pk)", fk)
                     else (pk, fk)
                 }.unzip
-                val rv = s"""lazy val $name = foreignKey("$dbName", ${compoundValue(fkColumns)}, $pkTable)(r => ${compoundValue(pkColumns)}, onUpdate=${onUpdate}, onDelete=${onDelete})"""
-                println(s"rv: $rv")
-                println(s"fkColumns: $fkColumns")
-                rv
+                s"""lazy val $name = foreignKey("$dbName", ${compoundValue(fkColumns)}, $pkTable)(r => ${compoundValue(pkColumns)}, onUpdate=${onUpdate}, onDelete=${onDelete})"""
             }
         }
-
-
-//        override def compoundValue(values: Seq[String]): String = {
-//            if(hlistEnabled) values.mkString(" :: ") + " :: HNil"
-//            else if (values.size == 1) values.head
-//            else if(values.size <= 22) s"""(${values.mkString(", ")})"""
-//            else throw new Exception("Cannot generate tuple for > 22 columns, please set hlistEnable=true or override compound.")
-//        }
 
     }
 
@@ -335,17 +310,6 @@ object AnsviaSlickSourceCodeGenerator {
             new AnsviaSlickSourceCodeGenerator(m, withEntityExtension).writeToFile(slickDriver,outputDir,pkg)
         } finally db.close
     }
-
-//    def run(uri: URI, outputDir: Option[String]): Unit = {
-//        val dc = DatabaseConfig.forURI[JdbcProfile](uri)
-//        val pkg = dc.config.getString("codegen.package")
-//        val out = outputDir.getOrElse(dc.config.getString("codegen.outputDir"))
-//        val slickDriver = if(dc.driverIsObject) dc.driverName else "new " + dc.driverName
-//        try {
-//            val m = Await.result(dc.db.run(dc.driver.createModel(None, false)(ExecutionContext.global).withPinnedSession), Duration.Inf)
-//            new SourceCodeGenerator(m).writeToFile(slickDriver, out, pkg)
-//        } finally dc.db.close
-//    }
 
     def main(args: Array[String]): Unit = {
         val withEntityExtension = args.contains("--with-entity-extension")
