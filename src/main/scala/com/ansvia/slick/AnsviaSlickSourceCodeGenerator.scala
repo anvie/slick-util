@@ -3,7 +3,8 @@ package com.ansvia.slick
 import slick.codegen.{AbstractSourceCodeGenerator, OutputHelpers}
 import slick.driver.JdbcProfile
 import slick.model.{ForeignKeyAction, Model}
-import slick.{model => m}
+import slick.profile.SqlProfile
+import slick.{model => m, SlickException}
 
 import scala.concurrent.duration.Duration
 import scala.concurrent.{Await, ExecutionContext}
@@ -19,9 +20,28 @@ import scala.concurrent.{Await, ExecutionContext}
  * My custom slick code generator to fit my taste.
  * @param model Slick data model for which code should be generated.
  */
-class AnsviaSlickSourceCodeGenerator(model: m.Model, withEntityExtension:Boolean)
+class AnsviaSlickSourceCodeGenerator(model: m.Model, withEntityExtension:Boolean, customProfile:Option[String])
     extends AbstractSourceCodeGenerator(model) with OutputHelpers {
 
+
+    override def packageCode(profile: String, pkg: String, container: String, parentType: Option[String]): String = {
+//        super.packageCode(profile, pkg, container, parentType)
+        s"""
+package ${pkg}
+// AUTO-GENERATED Slick data model
+/** Stand-alone Slick data model for immediate use */
+object ${container} extends {
+  val profile = ${customProfile.getOrElse(profile)}
+} with ${container}
+
+/** Slick data model trait for extension, choice of backend or usage in the cake pattern. (Make sure to initialize this late.) */
+trait ${container}${parentType.map(t => s" extends $t").getOrElse("")} {
+  val profile: ${customProfile.getOrElse("slick.driver.JdbcProfile")}
+  import profile.api._
+  ${indent(code)}
+}
+      """.trim()
+    }
 
     // "Tying the knot": making virtual classes concrete
     type Table = TableDef
@@ -34,6 +54,14 @@ class AnsviaSlickSourceCodeGenerator(model: m.Model, withEntityExtension:Boolean
     }
 
     protected def customHeadCode = {
+//        // apabila menggunakan customProfile asumsikan menggunakan pg-slick
+//        // perlu support untuk ltree
+//        val ltreeSupport = customProfile
+//            .map(x =>
+//                """// needed for custom ltree
+//                  |implicit val getListResult = GR(r => r.nextLTree().value)""".stripMargin)
+//            .getOrElse("")
+
         s"""
           |
           |// base entity class
@@ -42,6 +70,7 @@ class AnsviaSlickSourceCodeGenerator(model: m.Model, withEntityExtension:Boolean
           |abstract class BaseTable[T](tag: Tag, name: String) extends Table[T](tag, name) {
           |    val id: Rep[Long] = column[Long]("id", O.PrimaryKey, O.AutoInc)
           |}
+          |
         """.stripMargin.trim
     }
 
@@ -121,24 +150,51 @@ class ${name}Row(_tableTag: Tag) extends BaseTable[$elementType](_tableTag, ${ar
         type Column         =     ColumnDef
 //        def  Column         = new Column(_)
         def  Column         = new ColumnDef(_){
-//            def defaultCode = {
-//                case Some(v) => s"Some(${defaultCode(v)})"
-//                case s:String  => "\""+s+"\""
-//                case None      => s"None"
-//                case v:Byte    => s"$v"
-//                case v:Int     => s"$v"
-//                case v:Long    => s"${v}L"
-//                case v:Float   => s"${v}F"
-//                case v:Double  => s"$v"
-//                case v:Boolean => s"$v"
-//                case v:Short   => s"$v"
-//                case v:Char   => s"'$v'"
-//                case v:BigDecimal => s"new scala.math.BigDecimal(new java.math.BigDecimal($v))"
-//                case v => throw new SlickException( s"Dont' know how to generate code for default value $v of ${v.getClass}. Override def defaultCode to render the value." )
-//            }
-            // Explicit type to allow overloading existing Slick method names.
+            override def defaultCode = {
+                case Some(v) => s"Some(${defaultCode(v)})"
+                case s:String  => "\""+s+"\""
+                case None      => s"None"
+                case v:Byte    => s"$v"
+                case v:Int     => s"$v"
+                case v:Long    => s"${v}L"
+                case v:Float   => s"${v}F"
+                case v:Double  => s"$v"
+                case v:Boolean => s"$v"
+                case v:Short   => s"$v"
+                case v:Char   => s"'$v'"
+                case v:BigDecimal => s"new scala.math.BigDecimal(new java.math.BigDecimal($v))"
+                case v => throw new SlickException( s"Dont' know how to generate code for default value $v of ${v.getClass}. Override def defaultCode to render the value." )
+            }
+
+
+            override def rawType = {
+                val isTextArray = this.model.options.exists {
+                    case t:SqlProfile.ColumnOption.SqlType =>
+                        //                        println(s"${model.name} - $name: ${t.typeName}")
+                        t.typeName == "_text"
+                    case _ => false
+                }
+                if (isTextArray){
+                    "List[String]"
+                }else{
+                    super.rawType
+                }
+            }
+
+    // Explicit type to allow overloading existing Slick method names.
             // Explicit type argument for better error message when implicit type mapper not found.
             override def code = {
+//                val isTextArray = this.model.options.exists {
+//                    case t:SqlProfile.ColumnOption.SqlType =>
+////                        println(s"${model.name} - $name: ${t.typeName}")
+//                        t.typeName == "_text"
+//                    case _ => false
+//                }
+
+//                if (isTextArray) {
+//                    println(s"${model.table.table} - $name (text array)")
+//                }
+
                 (if (name == "id") "override " else "") +
                     s"""val $name: Rep[$actualType] = column[$actualType]("${model.name}"${options.map(", "+_).mkString("")})"""
             }
@@ -299,7 +355,8 @@ implicit def ${name}(implicit $dependencies): GR[${TableClass.elementType}] = GR
 /** A runnable class to execute the code generator without further setup */
 object AnsviaSlickSourceCodeGenerator {
 
-    def run(slickDriver: String, jdbcDriver: String, url: String, outputDir: String, pkg: String, user: Option[String], password: Option[String], withEntityExtension:Boolean): Unit = {
+    def run(slickDriver: String, jdbcDriver: String, url: String, outputDir: String, pkg: String,
+            user: Option[String], password: Option[String], withEntityExtension:Boolean, customProfile:Option[String]): Unit = {
         val driver: JdbcProfile =
             Class.forName(slickDriver + "$").getField("MODULE$").get(null).asInstanceOf[JdbcProfile]
         val dbFactory = driver.api.Database
@@ -307,7 +364,7 @@ object AnsviaSlickSourceCodeGenerator {
             user = user.getOrElse(null), password = password.getOrElse(null), keepAliveConnection = true)
         try {
             val m: Model = Await.result(db.run(driver.createModel(None, true)(ExecutionContext.global).withPinnedSession), Duration.Inf)
-            new AnsviaSlickSourceCodeGenerator(m, withEntityExtension).writeToFile(slickDriver,outputDir,pkg)
+            new AnsviaSlickSourceCodeGenerator(m, withEntityExtension, customProfile).writeToFile(slickDriver,outputDir,pkg)
         } finally db.close
     }
 
@@ -320,14 +377,16 @@ object AnsviaSlickSourceCodeGenerator {
 //            case uri :: outputDir :: Nil =>
 //                run(new URI(uri), Some(outputDir))
             case slickDriver :: jdbcDriver :: url :: outputDir :: pkg :: Nil =>
-                run(slickDriver, jdbcDriver, url, outputDir, pkg, None, None, withEntityExtension)
-            case slickDriver :: jdbcDriver :: url :: outputDir :: pkg :: user :: password :: Nil =>
-                run(slickDriver, jdbcDriver, url, outputDir, pkg, Some(user), Some(password), withEntityExtension)
+                run(slickDriver, jdbcDriver, url, outputDir, pkg, None, None, withEntityExtension, None)
+            case slickDriver :: jdbcDriver :: url :: outputDir :: pkg :: customProfile :: Nil =>
+                run(slickDriver, jdbcDriver, url, outputDir, pkg, None, None, withEntityExtension, Some(customProfile))
+//            case slickDriver :: jdbcDriver :: url :: outputDir :: pkg :: user :: password :: Nil =>
+//                run(slickDriver, jdbcDriver, url, outputDir, pkg, Some(user), Some(password), withEntityExtension)
             case _ => {
                 println("""
                           |Usage:
                           |  SourceCodeGenerator configURI [outputDir]
-                          |  SourceCodeGenerator slickDriver jdbcDriver url outputDir pkg [user password]
+                          |  SourceCodeGenerator slickDriver jdbcDriver url outputDir pkg [customProfile] [user password]
                           |
                           |Options:
                           |  configURI: A URL pointing to a standard database config file (a fragment is
